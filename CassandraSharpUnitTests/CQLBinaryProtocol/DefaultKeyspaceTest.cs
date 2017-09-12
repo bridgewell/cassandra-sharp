@@ -31,6 +31,8 @@ namespace CassandraSharpUnitTests.CQLBinaryProtocol
 
         private ICluster cluster;
 
+        public const string CassandraServerIp = "192.168.65.182";
+
         [SetUp]
         public void SetUp()
         {
@@ -39,7 +41,7 @@ namespace CassandraSharpUnitTests.CQLBinaryProtocol
 
             var config = new ClusterConfig
             {
-                Endpoints = new EndpointsConfig { Servers = new[] { "localhost" } },
+                Endpoints = new EndpointsConfig { Servers = new[] { CassandraServerIp } },
                 DefaultKeyspace =
                     new KeyspaceConfig
                     {

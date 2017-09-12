@@ -125,7 +125,7 @@ namespace CassandraSharpUnitTests.Functional
                 {
                     Endpoints = new EndpointsConfig
                         {
-                            Servers = new[] { "localhost" }
+                            Servers = new[] { CQLBinaryProtocol.DefaultKeyspaceTest.CassandraServerIp }
                         }
                 };
 
@@ -204,7 +204,7 @@ namespace CassandraSharpUnitTests.Functional
                         CVarchar = new string('x', 5000),
                         CList = new List<int> { 1, 2, 3 },
                         CSet = new HashSet<int> { 1, 2, 3 },
-                        CMap = new Dictionary<string, int> { { "one", 1 }, { "two", 2 }, { new string('x', 65525), 3 } },
+                        CMap = new Dictionary<string, int> { { "one", 1 }, { "two", 2 }, { new string('x', 65510), 3 } },
                         CEnum = TestEnum.ValueB,
                         CPoint = new Point { X = 1, Y = 3 }
                     };

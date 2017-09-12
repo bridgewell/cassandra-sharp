@@ -27,20 +27,25 @@ namespace CassandraSharp.CQLPropertyBag
         {
             get
             {
-                string lowName = name.ToLower(CultureInfo.InvariantCulture).Replace("_", "");
+                string lowName = name.ToLower(CultureInfo.InvariantCulture);
                 return _map[lowName];
             }
 
             set
             {
-                string lowName = name.ToLower(CultureInfo.InvariantCulture).Replace("_", "");
+                string lowName = name.ToLower(CultureInfo.InvariantCulture);
                 _map[lowName] = value;
             }
         }
 
-        public string[] Keys
+        public Dictionary<string, object>.KeyCollection Keys
         {
-            get { return _map.Keys.ToArray(); }
+            get { return _map.Keys; }
+        }
+
+        public Dictionary<string, object>.Enumerator GetEnumerator()
+        {
+            return _map.GetEnumerator();
         }
     }
 }

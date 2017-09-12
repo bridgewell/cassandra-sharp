@@ -62,12 +62,13 @@ namespace CassandraSharpUnitTests.Stress
         private void Worker()
         {
             IPHostEntry ipHostInfo = Dns.GetHostEntry("localhost");
-            IPAddress ipAddress = ipHostInfo.AddressList.First(x => x.AddressFamily == AddressFamily.InterNetwork);
-            EndPoint listenEndpoint = new IPEndPoint(ipAddress, _source);
+            IPAddress localAddress = ipHostInfo.AddressList.First(x => x.AddressFamily == AddressFamily.InterNetwork);
+            IPAddress targetipAddress = Dns.GetHostAddresses(CQLBinaryProtocol.DefaultKeyspaceTest.CassandraServerIp).First();
+            EndPoint listenEndpoint = new IPEndPoint(localAddress, _source);
 
             while (!_stop)
             {
-                EndPoint targetEndpoint = new IPEndPoint(ipAddress, _target);
+                EndPoint targetEndpoint = new IPEndPoint(targetipAddress, _target);
                 Socket targetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 targetSocket.Connect(targetEndpoint);
 
@@ -186,7 +187,7 @@ namespace CassandraSharpUnitTests.Stress
                 {
                         Endpoints = new EndpointsConfig
                             {
-                                    Servers = new[] {"localhost"},
+                                    Servers = new[] { "localhost" },
                             },
                         Transport = new TransportConfig
                             {
@@ -219,7 +220,7 @@ namespace CassandraSharpUnitTests.Stress
 
                 proxy.EnableKiller();
 
-                for (int i = 0; i < 10000; ++i)
+                for (int i = 0; i < 100; ++i)
                 {
                     int attempt = 0;
                     while (true)

@@ -21,6 +21,8 @@ namespace CassandraSharp.Cluster
     using System.Numerics;
     using CassandraSharp.Extensibility;
     using CassandraSharp.Utils;
+    using System.Collections.Concurrent;
+    using System.Linq;
 
     internal sealed class SingleConnectionPerEndpointCluster : ICluster
     {
@@ -28,9 +30,7 @@ namespace CassandraSharp.Cluster
 
         private readonly IEndpointStrategy _endpointStrategy;
 
-        private readonly object _globalLock = new object();
-
-        private readonly Dictionary<IPAddress, IConnection> _ip2Connection;
+        private readonly ConcurrentDictionary<IPAddress, IConnection> _ip2Connection;
 
         private readonly ILogger _logger;
 
@@ -39,7 +39,7 @@ namespace CassandraSharp.Cluster
         public SingleConnectionPerEndpointCluster(IEndpointStrategy endpointStrategy, ILogger logger,
                                                   IConnectionFactory connectionFactory, IRecoveryService recoveryService, IPartitioner partitioner)
         {
-            _ip2Connection = new Dictionary<IPAddress, IConnection>();
+            _ip2Connection = new ConcurrentDictionary<IPAddress, IConnection>();
             _endpointStrategy = endpointStrategy;
             _logger = logger;
             _connectionFactory = connectionFactory;
@@ -53,56 +53,47 @@ namespace CassandraSharp.Cluster
 
         public void Dispose()
         {
-            lock (_globalLock)
-            {
-                foreach (IConnection connection in _ip2Connection.Values)
-                {
-                    connection.SafeDispose();
-                }
-                _ip2Connection.Clear();
+            var allConnections = _ip2Connection.ToArray();
+            _ip2Connection.Clear();
 
-                if (null != OnClosed)
-                {
-                    OnClosed();
-                    OnClosed = null;
-                }
+            foreach (IConnection connection in allConnections.Select(c => c.Value))
+            {
+                connection.SafeDispose();
+            }
+
+            if (null != OnClosed)
+            {
+                OnClosed();
+                OnClosed = null;
             }
         }
 
         public IConnection GetConnection(BigInteger? token)
         {
-            lock (_globalLock)
+            IConnection connection = null;
+            try
             {
-                IConnection connection = null;
-                try
+                while (null == connection)
                 {
-                    while (null == connection)
+                    // pick and initialize a new endpoint connection
+                    IPAddress endpoint = _endpointStrategy.Pick(token);
+                    if (null == endpoint)
                     {
-                        // pick and initialize a new endpoint connection
-                        IPAddress endpoint = _endpointStrategy.Pick(token);
-                        if (null == endpoint)
-                        {
-                            throw new ArgumentException("Can't find any valid endpoint");
-                        }
-
-                        if (!_ip2Connection.TryGetValue(endpoint, out connection))
-                        {
-                            // try to create a new connection - if this fails, recover the endpoint
-                            connection = CreateTransportOrMarkEndpointForRecovery(endpoint);
-                            if (null != connection)
-                            {
-                                _ip2Connection.Add(endpoint, connection);
-                            }
-                        }
+                        throw new ArgumentException("Can't find any valid endpoint");
                     }
 
-                    return connection;
+                    connection = _ip2Connection.GetOrAdd(endpoint, ep => CreateTransportOrMarkEndpointForRecovery(ep));
+                    if (connection == null)
+                    {
+                        _ip2Connection.TryRemove(endpoint, out connection);
+                    }
                 }
-                catch
-                {
-                    connection.SafeDispose();
-                    throw;
-                }
+                return connection;
+            }
+            catch
+            {
+                connection.SafeDispose();
+                throw;
             }
         }
 
@@ -125,19 +116,16 @@ namespace CassandraSharp.Cluster
 
         private void OnFailure(object sender, FailureEventArgs e)
         {
-            lock (_globalLock)
+            IConnection connection = sender as IConnection;
+            if (null != connection && _ip2Connection.ContainsKey(connection.Endpoint))
             {
-                IConnection connection = sender as IConnection;
-                if (null != connection && _ip2Connection.ContainsKey(connection.Endpoint))
-                {
-                    IPAddress endpoint = connection.Endpoint;
-                    _logger.Error("connection {0} failed with error {1}", endpoint, e.Exception);
+                IPAddress endpoint = connection.Endpoint;
+                _logger.Error("connection {0} failed with error {1}", endpoint, e.Exception);
 
-                    _ip2Connection.Remove(endpoint);
-                    sender.SafeDispose();
+                _ip2Connection.TryRemove(endpoint, out connection);
+                sender.SafeDispose();
 
-                    MarkEndpointForRecovery(endpoint);
-                }
+                MarkEndpointForRecovery(endpoint);
             }
         }
 
@@ -151,14 +139,11 @@ namespace CassandraSharp.Cluster
 
         private void ClientRecoveredCallback(IConnection connection)
         {
-            lock (_globalLock)
-            {
-                _logger.Info("Endpoint {0} is recovered", connection.Endpoint);
+            _logger.Info("Endpoint {0} is recovered", connection.Endpoint);
 
-                _endpointStrategy.Permit(connection.Endpoint);
-                _ip2Connection.Add(connection.Endpoint, connection);
-                connection.OnFailure += OnFailure;
-            }
+            _endpointStrategy.Permit(connection.Endpoint);
+            _ip2Connection.TryAdd(connection.Endpoint, connection);
+            connection.OnFailure += OnFailure;
         }
     }
 }

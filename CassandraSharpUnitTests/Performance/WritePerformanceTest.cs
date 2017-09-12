@@ -34,7 +34,7 @@ namespace CassandraSharpUnitTests.Performance
         {
             using (ProtocolWrapper protocol = new TP())
             {
-                protocol.Open("localhost");
+                protocol.Open(CQLBinaryProtocol.DefaultKeyspaceTest.CassandraServerIp);
 
                 const string dropKeyspace = "drop keyspace Tests";
                 const string truncateTable = "truncate Tests.stresstest";
