@@ -25,6 +25,6 @@ namespace CassandraSharp.Enlightenment
 
         void Shutdown();
 
-        void Configure(CassandraSharpConfig config);
+        bool Configure(CassandraSharpConfig config);
     }
 }

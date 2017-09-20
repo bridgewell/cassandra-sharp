@@ -106,9 +106,8 @@ namespace CassandraSharp.EndpointStrategy
                 case NotificationKind.Remove:
                     {
                         var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
-                        if (newHealthy.Contains(endpoint))
+                        if (newHealthy.Remove(endpoint))
                         {
-                            newHealthy.Remove(endpoint);
                             _healthyEndpoints = newHealthy.ToArray();
                         }
                     }

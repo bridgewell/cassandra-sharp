@@ -21,18 +21,19 @@ namespace CassandraSharp.EndpointStrategy
     using System.Numerics;
     using CassandraSharp.Extensibility;
     using CassandraSharp.Utils;
+    using System.Linq;
 
     internal sealed class NearestEndpointStrategy : IEndpointStrategy
     {
-        private readonly List<IPAddress> _bannedEndpoints;
+        private IPAddress[] _bannedEndpoints;
+
+        private IPAddress[] _healthyEndpoints;
 
         private readonly IPAddress _clientAddress;
 
-        private readonly List<IPAddress> _healthyEndpoints;
-
-        private readonly object _lock = new object();
-
         private readonly IEndpointSnitch _snitch;
+
+        private readonly EndpointComparer epComparer;
 
         public NearestEndpointStrategy(IEnumerable<IPAddress> endpoints, IEndpointSnitch snitch)
         {
@@ -43,64 +44,83 @@ namespace CassandraSharp.EndpointStrategy
                 throw new ArgumentException("Failed to resolve IP for client address");
             }
 
-            _healthyEndpoints = snitch.GetSortedListByProximity(_clientAddress, endpoints);
-            _bannedEndpoints = new List<IPAddress>();
+            _healthyEndpoints = snitch.GetSortedListByProximity(_clientAddress, endpoints).ToArray();
+            _bannedEndpoints = new IPAddress[] { };
+            epComparer = new EndpointComparer(_snitch, _clientAddress);
         }
 
         public IPAddress Pick(BigInteger? token)
         {
-            lock (_lock)
-            {
-                IPAddress endpoint = null;
-                if (0 < _healthyEndpoints.Count)
-                {
-                    endpoint = _healthyEndpoints[0];
-                }
-
-                return endpoint;
-            }
+            var currentHealthyPoints = _healthyEndpoints;
+            return (0 < currentHealthyPoints.Length) ? currentHealthyPoints[0] : null;
         }
 
         public void Ban(IPAddress endPoint)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            if (newHealthy.Remove(endPoint))
             {
-                if (_healthyEndpoints.Remove(endPoint))
-                {
-                    _bannedEndpoints.Add(endPoint);
-                }
+                newBan.Add(endPoint);
+                _healthyEndpoints = newHealthy.ToArray();
+                _bannedEndpoints = newBan.ToArray();
             }
         }
 
         public void Permit(IPAddress endPoint)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            if (newBan.Remove(endPoint))
             {
-                if (_bannedEndpoints.Remove(endPoint))
-                {
-                    _healthyEndpoints.Add(endPoint);
-                    _healthyEndpoints.Sort((a1, a2) => _snitch.CompareEndpoints(_clientAddress, a1, a2));
-                }
+                newHealthy.Add(endPoint);
+                _healthyEndpoints = newHealthy.OrderBy(e => e, epComparer).ToArray();
+                _bannedEndpoints = newBan.ToArray();
             }
         }
 
         public void Update(NotificationKind kind, Peer peer)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            IPAddress endpoint = peer.RpcAddress;
+            switch (kind)
             {
-                bool updated = false;
-                IPAddress endpoint = peer.RpcAddress;
-                if (!_healthyEndpoints.Contains(endpoint) && !_bannedEndpoints.Contains(endpoint))
-                {
-                    _healthyEndpoints.Add(endpoint);
-                    updated = true;
-                }
-
-                if (updated)
-                {
-                    _healthyEndpoints.Sort((a1, a2) => _snitch.CompareEndpoints(_clientAddress, a1, a2));
-                }
+                case NotificationKind.Remove:
+                    if (newHealthy.Remove(endpoint))
+                    {
+                        _healthyEndpoints = newHealthy.OrderBy(e => e, epComparer).ToArray();
+                    }
+                    if (newBan.Remove(endpoint))
+                    {
+                        _bannedEndpoints = newBan.ToArray();
+                    }
+                    break;
+                case NotificationKind.Add:
+                case NotificationKind.Update:
+                    if (!newHealthy.Contains(endpoint) && !newBan.Contains(endpoint))
+                    {
+                        newHealthy.Add(endpoint);
+                        _healthyEndpoints = newHealthy.OrderBy(e => e, epComparer).ToArray();
+                    }
+                    break;
             }
+        }
+    }
+
+    class EndpointComparer : IComparer<IPAddress>
+    {
+        private IPAddress _client;
+        private IEndpointSnitch _snitch;
+
+        public EndpointComparer(IEndpointSnitch snitch, IPAddress clientAddress)
+        {
+            _snitch = snitch;
+            _client = clientAddress;
+        }
+        public int Compare(IPAddress x, IPAddress y)
+        {
+            return _snitch.CompareEndpoints(_client, x, y);
         }
     }
 }

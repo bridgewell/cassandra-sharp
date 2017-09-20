@@ -19,71 +19,82 @@ namespace CassandraSharp.EndpointStrategy
     using System.Collections.Generic;
     using System.Net;
     using System.Numerics;
+    using System.Linq;
     using CassandraSharp.Extensibility;
+    using CassandraSharp.Utils;
 
     internal sealed class RandomEndpointStrategy : IEndpointStrategy
     {
-        private readonly List<IPAddress> _bannedEndpoints;
+        private IPAddress[] _bannedEndpoints;
 
-        private readonly List<IPAddress> _healthyEndpoints;
-
-        private readonly object _lock = new object();
-
-        private readonly Random _rnd;
+        private IPAddress[] _healthyEndpoints;
 
         public RandomEndpointStrategy(IEnumerable<IPAddress> endpoints)
         {
-            _healthyEndpoints = new List<IPAddress>(endpoints);
-            _bannedEndpoints = new List<IPAddress>();
-            _rnd = new Random();
+            _healthyEndpoints = endpoints.ToArray();
+            
+            _bannedEndpoints = new IPAddress[] { };
         }
 
         public IPAddress Pick(BigInteger? token)
         {
-            lock (_lock)
-            {
-                IPAddress endpoint = null;
-                if (0 < _healthyEndpoints.Count)
-                {
-                    int candidate = _rnd.Next(_healthyEndpoints.Count);
-                    endpoint = _healthyEndpoints[candidate];
-                }
-
-                return endpoint;
-            }
+            var currentHealthy = _healthyEndpoints;
+            return (0 < currentHealthy.Length) ?
+                currentHealthy[ThreadSafeRandom.Next(currentHealthy.Length)] :
+                null;
         }
 
         public void Ban(IPAddress endpoint)
         {
-            lock (_lock)
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            if (newHealthy.Remove(endpoint))
             {
-                if (_healthyEndpoints.Remove(endpoint))
-                {
-                    _bannedEndpoints.Add(endpoint);
-                }
+                newBan.Add(endpoint);
+
+                _bannedEndpoints = newBan.ToArray();
+                _healthyEndpoints = newHealthy.ToArray();
             }
         }
 
         public void Permit(IPAddress endpoint)
         {
-            lock (_lock)
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            if (newBan.Remove(endpoint))
             {
-                if (_bannedEndpoints.Remove(endpoint))
-                {
-                    _healthyEndpoints.Add(endpoint);
-                }
+                newHealthy.Add(endpoint);
+
+                _bannedEndpoints = newBan.ToArray();
+                _healthyEndpoints = newHealthy.ToArray();
             }
         }
 
         public void Update(NotificationKind kind, Peer peer)
         {
-            lock (_lock)
+            var newBan = new HashSet<IPAddress>(_bannedEndpoints);
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            IPAddress endpoint = peer.RpcAddress;
+            switch (kind)
             {
-                IPAddress endpoint = peer.RpcAddress;
-                if (!_healthyEndpoints.Contains(endpoint) && !_bannedEndpoints.Contains(endpoint))
-                {
-                    _healthyEndpoints.Add(endpoint);
-                }
+                case NotificationKind.Remove:
+                    if (newHealthy.Remove(endpoint))
+                    {
+                        _healthyEndpoints = newHealthy.ToArray();
+                    }
+                    if (newBan.Remove(endpoint))
+                    {
+                        _bannedEndpoints = newBan.ToArray();
+                    }
+                    break;
+                case NotificationKind.Add:
+                case NotificationKind.Update:
+                    if (!newHealthy.Contains(endpoint) && !newBan.Contains(endpoint))
+                    {
+                        newHealthy.Add(endpoint);
+                        _healthyEndpoints = newHealthy.ToArray();
+                    }
+                    break;
             }
         }
     }

@@ -34,5 +34,8 @@ namespace CassandraSharp.Config
 
         [XmlAnyAttribute]
         public XmlAttribute[] Extensions { get; set; }
+
+        [XmlAttribute("DataCenter")]
+        public string[] DataCenter { get; set; }
     }
 }

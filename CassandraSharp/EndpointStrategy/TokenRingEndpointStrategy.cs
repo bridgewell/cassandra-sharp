@@ -18,8 +18,10 @@ namespace CassandraSharp.EndpointStrategy
     using System.Collections.Generic;
     using System.Net;
     using System.Numerics;
+    using System.Linq;
     using CassandraSharp.Extensibility;
     using CassandraSharp.Utils;
+    using System.Threading;
 
     /// <summary>
     ///     Will pick a node by it's token to choose the coordinator node by the row key of the query.
@@ -28,9 +30,7 @@ namespace CassandraSharp.EndpointStrategy
     /// </summary>
     internal sealed class TokenRingEndpointStrategy : IEndpointStrategy
     {
-        private readonly List<IPAddress> _healthyEndpoints;
-
-        private readonly object _lock = new object();
+        private IPAddress[] _healthyEndpoints;
 
         private readonly TokenRing _ring;
 
@@ -38,85 +38,108 @@ namespace CassandraSharp.EndpointStrategy
 
         public TokenRingEndpointStrategy(IEnumerable<IPAddress> endpoints)
         {
-            _healthyEndpoints = new List<IPAddress>(endpoints);
+            _healthyEndpoints = endpoints.ToArray();            
             _nextCandidate = 0;
             _ring = new TokenRing();
         }
 
         public void Ban(IPAddress endpoint)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            if (newHealthy.Remove(endpoint))
             {
-                if (_healthyEndpoints.Remove(endpoint))
+                lock(_ring)
                 {
                     _ring.BanNode(endpoint);
                 }
+                _healthyEndpoints = newHealthy.ToArray();
             }
         }
 
         public void Permit(IPAddress endpoint)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            newHealthy.Add(endpoint);
+            _healthyEndpoints = newHealthy.ToArray();
+            lock (_ring)
             {
-                _healthyEndpoints.Add(endpoint);
                 _ring.PermitNode(endpoint);
             }
         }
 
         public IPAddress Pick(BigInteger? token)
         {
-            IPAddress endpoint = null;
-            if (0 < _healthyEndpoints.Count)
+            var currentHealthy = _healthyEndpoints;
+            if (0 < currentHealthy.Length)
             {
                 if (token.HasValue && 0 < _ring.RingSize())
                 {
                     //Attempt to binary search for key in token ring
-                    lock (_lock)
+                    lock (_ring)
                     {
-                        endpoint = _ring.FindReplica(token.Value);
+                        return _ring.FindReplica(token.Value);
                     }
                 }
                 else
                 {
                     //fallback to round robin when no hint supplied
-                    lock (_lock)
+                    switch (currentHealthy.Length)
                     {
-                        _nextCandidate = (_nextCandidate + 1) % _healthyEndpoints.Count;
-                        endpoint = _healthyEndpoints[_nextCandidate];
+                        case 0:
+                            return null;
+                        case 1:
+                            return currentHealthy[0];
                     }
+
+                    int nextCandidate = Interlocked.Increment(ref _nextCandidate);
+                    if (nextCandidate < currentHealthy.Length)
+                        return currentHealthy[nextCandidate];
+
+                    var fix_candidate = nextCandidate % currentHealthy.Length;
+                    Interlocked.CompareExchange(ref _nextCandidate, fix_candidate, nextCandidate);
+                    return currentHealthy[fix_candidate];                    
                 }
             }
 
-            return endpoint;
+            return null;
         }
 
         public void Update(NotificationKind kind, Peer peer)
         {
-            lock (_lock)
+            var newHealthy = new HashSet<IPAddress>(_healthyEndpoints);
+            IPAddress endpoint = peer.RpcAddress;
+            switch (kind)
             {
-                IPAddress endpoint = peer.RpcAddress;
-                switch (kind)
-                {
-                    case NotificationKind.Add:
-                        if (!_healthyEndpoints.Contains(endpoint))
+                case NotificationKind.Add:
+                    if (!newHealthy.Contains(endpoint))
+                    {
+                        newHealthy.Add(endpoint);
+                        _healthyEndpoints = newHealthy.ToArray();
+                        lock (_ring)
                         {
-                            _healthyEndpoints.Add(endpoint);
                             _ring.AddOrUpdateNode(peer);
                         }
-                        break;
+                    }
+                    break;
 
-                    case NotificationKind.Update:
+                case NotificationKind.Update:
+                    lock (_ring)
+                    {
                         _ring.AddOrUpdateNode(peer);
-                        break;
+                    }
+                    break;
 
-                    case NotificationKind.Remove:
-                        if (_healthyEndpoints.Contains(endpoint))
+                case NotificationKind.Remove:
+                    if (newHealthy.Contains(endpoint))
+                    {
+                        newHealthy.Remove(endpoint);
+                        _healthyEndpoints = newHealthy.ToArray();
+                        lock (_ring)
                         {
-                            _healthyEndpoints.Remove(endpoint);
                             _ring.RemoveNode(endpoint);
                         }
-                        break;
-                }
+                    }
+                    break;
             }
         }
     }

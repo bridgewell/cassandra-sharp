@@ -93,35 +93,39 @@ namespace CassandraSharp.Enlightenment
         {
             lock (_lock)
             {
-                _recoveryService.SafeDispose();
+                _recoveryService?.SafeDispose();
                 _recoveryService = null;
 
-                _instrumentation.SafeDispose();
+                _instrumentation?.SafeDispose();
                 _instrumentation = null;
 
-                _logger.SafeDispose();
+                _logger?.SafeDispose();
                 _logger = null;
 
                 _config = null;
             }
         }
 
-        public void Configure(CassandraSharpConfig config)
+        /// <summary>
+        /// return true for Configure success
+        /// </summary>
+        /// <param name="config"></param>
+        /// <returns></returns>
+        public bool Configure(CassandraSharpConfig config)
         {
-            config.CheckArgumentNotNull("config");
+            if (config == null)
+                return false;
 
-            lock (_lock)
+            if (null != _config)
             {
-                if (null != _config)
-                {
-                    throw new InvalidOperationException("ClusterManager is already initialized");
-                }
-
-                _logger = ServiceActivator<Logger.Factory>.Create<ILogger>(config.Logger.Type, config.Logger);
-                _recoveryService = ServiceActivator<Recovery.Factory>.Create<IRecoveryService>(config.Recovery.Type, config.Recovery, _logger);
-                _instrumentation = ServiceActivator<Instrumentation.Factory>.Create<IInstrumentation>(config.Instrumentation.Type, config.Instrumentation);
-                _config = config;
+                return true;
             }
+
+            _logger = ServiceActivator<Logger.Factory>.Create<ILogger>(config.Logger.Type, config.Logger);
+            _recoveryService = ServiceActivator<Recovery.Factory>.Create<IRecoveryService>(config.Recovery.Type, config.Recovery, _logger);
+            _instrumentation = ServiceActivator<Instrumentation.Factory>.Create<IInstrumentation>(config.Instrumentation.Type, config.Instrumentation);
+            _config = config;
+            return true;
         }
 
         private ClusterConfig GetClusterConfig(string name)

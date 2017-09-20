@@ -72,7 +72,7 @@ namespace CassandraSharp
         /// <summary>
         /// Similar to <c>One</c> but only within the DC the coordinator is in.
         /// </summary>
-        LOCAL_ONE = 0x000A
+        LOCAL_ONE = 0x000A,
 
         // ReSharper restore InconsistentNaming
 

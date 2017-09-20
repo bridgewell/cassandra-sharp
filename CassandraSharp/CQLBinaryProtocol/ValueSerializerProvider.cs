@@ -17,26 +17,19 @@ namespace CassandraSharp.CQLBinaryProtocol
 {
     using System;
     using System.Collections.Generic;
+    using System.Collections.Concurrent;
 
     public static class ValueSerializerProvider
     {
-        private static readonly Dictionary<Type, IValueSerializer> _valueSerializers = new Dictionary<Type, IValueSerializer>();
+        private static readonly ConcurrentDictionary<Type, IValueSerializer> _valueSerializers = new ConcurrentDictionary<Type, IValueSerializer>();
 
         public static IValueSerializer GetSerializer(Type type)
         {
-            lock (_valueSerializers)
+            return _valueSerializers.GetOrAdd(type, t =>
             {
-                IValueSerializer serializer;
-                if (!_valueSerializers.TryGetValue(type, out serializer))
-                {
-                    Type serializerType = typeof(ValueSerializer<>).MakeGenericType(type);
-                    serializer = (IValueSerializer)Activator.CreateInstance(serializerType);
-
-                    _valueSerializers[type] = serializer;
-                }
-
-                return serializer;
-            }
+                Type serializerType = typeof(ValueSerializer<>).MakeGenericType(type);
+                return (IValueSerializer)Activator.CreateInstance(serializerType);
+            });
         }
     }
 }

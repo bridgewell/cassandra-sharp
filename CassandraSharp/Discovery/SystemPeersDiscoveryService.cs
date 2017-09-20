@@ -37,6 +37,8 @@ namespace CassandraSharp.Discovery
 
         private readonly Timer _timer;
 
+        private readonly DiscoveryConfig _config;
+
         public SystemPeersDiscoveryService(ILogger logger, ICluster cluster, DiscoveryConfig config)
         {
             IDataMapperFactory mapper = new PocoDataMapperFactory();
@@ -44,6 +46,7 @@ namespace CassandraSharp.Discovery
 
             _logger = logger;
             _cluster = cluster;
+            _config = config;
             _timer = new Timer(config.Interval*1000);
             _timer.Elapsed += (s, e) => TryDiscover();
             _timer.AutoReset = true;
@@ -74,12 +77,21 @@ namespace CassandraSharp.Discovery
                             RpcAddress = rpcAddress,
                             Datacenter = datacenter,
                             Rack = rack,
-                            Tokens = tokens.Select(BigInteger.Parse).ToArray()
+                            Tokens = tokens?.Select(BigInteger.Parse).ToArray()
                     };
 
-                _logger.Info("Discovered peer {0}, {1}, {2}", rpcAddress, datacenter, rack);
+                // see if we are at available datacenters.
+                bool needDisCover = true;
+                if (_config.DataCenter?.Length > 0)
+                {
+                    needDisCover = _config.DataCenter.Contains(datacenter);
+                }
+                _logger.Info("Discovered peer {0}, {1}, {2}, need:{3}", rpcAddress, datacenter, rack, needDisCover);
 
-                OnTopologyUpdate(NotificationKind.Update, peer);
+                if (needDisCover)
+                    OnTopologyUpdate(NotificationKind.Update, peer);
+                else
+                    OnTopologyUpdate(NotificationKind.Remove, peer);
             }
         }
 
