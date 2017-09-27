@@ -159,7 +159,9 @@ namespace CassandraSharp.Transport
                 Monitor.Pulse(_lock);
                 if (_isClosed)
                 {
-                    throw new OperationCanceledException();
+                    var ex = new OperationCanceledException();
+                    OnFailure?.Invoke(this, new FailureEventArgs(ex));
+                    throw ex;
                 }
 
                 _pendingQueries.Enqueue(queryInfo);
@@ -236,12 +238,10 @@ namespace CassandraSharp.Transport
             // we have now the guarantee this instance is destroyed once
             _tcpClient.SafeDispose();
 
-            if (null != ex && null != OnFailure)
+            if (null != ex)
             {
                 _logger.Fatal("Failed with error : {0}", ex);
-
-                FailureEventArgs failureEventArgs = new FailureEventArgs(ex);
-                OnFailure(this, failureEventArgs);
+                OnFailure?.Invoke(this, new FailureEventArgs(ex));
             }
 
             // release event to release observer

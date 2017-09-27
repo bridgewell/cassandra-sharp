@@ -247,5 +247,91 @@ namespace CassandraSharpUnitTests.Stress
 
             proxy.Stop();
         }
+
+
+
+        [Test]
+        public void ConnectionFailedTest()
+        {
+            CassandraSharpConfig cassandraSharpConfig = new CassandraSharpConfig
+            {
+                Logger = new LoggerConfig { Type = typeof(ResilienceLogger).AssemblyQualifiedName },                
+                //Recovery = new RecoveryConfig { Interval = 2 }
+            };
+            ClusterManager.Configure(cassandraSharpConfig);
+
+            ClusterConfig clusterConfig = new ClusterConfig
+            {
+                Endpoints = new EndpointsConfig
+                {
+                    Servers = new[] { "localhost" , CQLBinaryProtocol.DefaultKeyspaceTest.CassandraServerIp },
+                    Strategy = "RoundRobin",
+                    Discovery = new DiscoveryConfig() {
+                        Type = "Null",
+                    },
+                },
+              
+                Transport = new TransportConfig
+                {
+                    Port = 9042,
+                    ReceiveTimeout = 10 * 1000,
+                }
+            };
+
+            DisconnectingProxy proxy = new DisconnectingProxy(9042, 9042);
+            proxy.Start();
+
+            using (ICluster cluster = ClusterManager.GetCluster(clusterConfig))
+            {
+                ICqlCommand cmd = cluster.CreatePocoCommand();
+
+                const string dropFoo = "drop keyspace data";
+                try
+                {
+                    cmd.Execute(dropFoo).AsFuture().Wait();
+                }
+                catch
+                {
+                }
+
+                const string createFoo = "CREATE KEYSPACE data WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 1}";
+                cmd.Execute(createFoo).AsFuture().Wait();
+
+                const string createBar = "CREATE TABLE data.test (time text PRIMARY KEY)";
+                cmd.Execute(createBar).AsFuture().Wait();
+
+                proxy.EnableKiller();
+
+                var prepared1 = cmd.Prepare("insert into data.test(time) values ('?');");
+                var prepared2 = cmd.Prepare("insert into data.test(time) values ('?');");
+
+                for (int i = 0; i < 100; ++i)
+                {
+                    int attempt = 0;
+                    while (true)
+                    {
+                        var now = DateTime.Now;
+                        Console.WriteLine("{0}.{1})", i, ++attempt);
+                        try
+                        {
+                            prepared1.Execute(new { time = now }).AsFuture().Wait();
+                            prepared2.Execute(new { time = now }).AsFuture().Wait();
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("Failed with error {0}", ex.Message);
+                            Thread.Sleep(1000);
+                            if (attempt >= 3)
+                                break;
+                        }
+                    }
+                }
+
+                ClusterManager.Shutdown();
+            }
+
+            proxy.Stop();
+        }
     }
 }
