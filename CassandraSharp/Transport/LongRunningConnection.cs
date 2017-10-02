@@ -29,13 +29,12 @@ namespace CassandraSharp.Transport
     using CassandraSharp.Exceptions;
     using CassandraSharp.Extensibility;
     using CassandraSharp.Utils;
+    using System.Collections.Concurrent;
 
     internal sealed class LongRunningConnection : IConnection,
                                                   IDisposable
     {
         private const byte MAX_STREAMID = 0x80;
-
-        private readonly Stack<byte> _availableStreamIds = new Stack<byte>();
 
         private readonly TransportConfig _config;
 
@@ -43,14 +42,25 @@ namespace CassandraSharp.Transport
 
         private readonly IInstrumentation _instrumentation;
 
-        private readonly object _lock = new object();
-
         private readonly ILogger _logger;
 
-        private readonly Queue<QueryInfo> _pendingQueries = new Queue<QueryInfo>();
+        /// <summary>
+        /// available stream ids
+        /// </summary>
+        private readonly BlockingCollection<byte> _availableStreamIds = new BlockingCollection<byte>();
+
+        /// <summary>
+        /// pending queries before send to server
+        /// </summary>
+        private readonly BlockingCollection<QueryInfo> _pendingQueries = new BlockingCollection<QueryInfo>();
+
+        private readonly CancellationTokenSource running;
 
         private readonly Action<QueryInfo, IFrameReader, bool> _pushResult;
 
+        /// <summary>
+        /// sent queries to server, but not get response yet.
+        /// </summary>
         private readonly QueryInfo[] _queryInfos = new QueryInfo[MAX_STREAMID];
 
         private readonly Task _queryWorker;
@@ -61,7 +71,11 @@ namespace CassandraSharp.Transport
 
         private readonly TcpClient _tcpClient;
 
-        private bool _isClosed;
+        /// <summary>
+        /// 1 means closed, 0 means running
+        /// cannot use bool because Interlocked.Exchange does not support bool.
+        /// </summary>
+        private int _isClosed;
 
         public LongRunningConnection(IPAddress address, TransportConfig config, KeyspaceConfig keyspaceConfig, ILogger logger, IInstrumentation instrumentation)
         {
@@ -69,7 +83,7 @@ namespace CassandraSharp.Transport
             {
                 for (byte streamId = 0; streamId < MAX_STREAMID; ++streamId)
                 {
-                    _availableStreamIds.Push(streamId);
+                    _availableStreamIds.Add(streamId);
                 }
 
                 _config = config;
@@ -124,6 +138,7 @@ namespace CassandraSharp.Transport
                 _pushResult = _config.ReceiveBuffering
                                       ? (Action<QueryInfo, IFrameReader, bool>)((qi, fr, a) => Task.Factory.StartNew(() => PushResult(qi, fr, a)))
                                       : PushResult;
+                running = new CancellationTokenSource();
                 _responseWorker = Task.Factory.StartNew(() => RunWorker(ReadResponse), TaskCreationOptions.LongRunning);
                 _queryWorker = Task.Factory.StartNew(() => RunWorker(SendQuery), TaskCreationOptions.LongRunning);
 
@@ -153,19 +168,14 @@ namespace CassandraSharp.Transport
         public void Execute<T>(Action<IFrameWriter> writer, Func<IFrameReader, IEnumerable<T>> reader, InstrumentationToken token,
                                IObserver<T> observer)
         {
-            QueryInfo queryInfo = new QueryInfo<T>(writer, reader, token, observer);
-            lock (_lock)
+            if (_isClosed == 1)
             {
-                Monitor.Pulse(_lock);
-                if (_isClosed)
-                {
-                    var ex = new OperationCanceledException();
-                    OnFailure?.Invoke(this, new FailureEventArgs(ex));
-                    throw ex;
-                }
-
-                _pendingQueries.Enqueue(queryInfo);
+                var ex = new OperationCanceledException();
+                OnFailure?.Invoke(this, new FailureEventArgs(ex));
+                throw ex;
             }
+            QueryInfo queryInfo = new QueryInfo<T>(writer, reader, token, observer);
+            _pendingQueries.Add(queryInfo);
         }
 
         public void Dispose()
@@ -201,38 +211,33 @@ namespace CassandraSharp.Transport
         private void Close(Exception ex)
         {
             // already in close state ?
-            lock (_lock)
+            QueryInfo queryInfo;
+            int wasClosed = Interlocked.Exchange(ref this._isClosed, 1);
+            if (wasClosed == 1)
             {
-                bool wasClosed = _isClosed;
-                _isClosed = true;
-                Monitor.PulseAll(_lock);
+                return;
+            }
+            running.Cancel();
+            _pendingQueries.CompleteAdding();
 
-                if (wasClosed)
-                {
-                    return;
-                }
-
-                // abort all pending queries
-                OperationCanceledException canceledException = new OperationCanceledException();
-                for (int i = 0; i < _queryInfos.Length; ++i)
-                {
-                    var queryInfo = _queryInfos[i];
-                    if (null != queryInfo)
-                    {
-                        queryInfo.NotifyError(canceledException);
-                        _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
-
-                        _queryInfos[i] = null;
-                    }
-                }
-
-                foreach (var queryInfo in _pendingQueries)
+            // abort all pending queries
+            OperationCanceledException canceledException = new OperationCanceledException();
+            for (int i = 0; i < _queryInfos.Length; ++i)
+            {
+                queryInfo = _queryInfos[i];
+                if (null != queryInfo)
                 {
                     queryInfo.NotifyError(canceledException);
                     _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
-                }
 
-                _pendingQueries.Clear();
+                    _queryInfos[i] = null;
+                }
+            }
+            // cleanup not sending queries.
+            while (_pendingQueries.TryTake(out queryInfo))
+            {
+                queryInfo.NotifyError(canceledException);
+                _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
             }
 
             // we have now the guarantee this instance is destroyed once
@@ -262,22 +267,16 @@ namespace CassandraSharp.Transport
 
         private void SendQuery()
         {
-            while (true)
+            foreach (var queryInfo in _pendingQueries.GetConsumingEnumerable())
             {
-                QueryInfo queryInfo;
-                lock (_lock)
-                {
-                    while (!_isClosed && 0 == _pendingQueries.Count)
-                    {
-                        Monitor.Wait(_lock);
-                    }
-                    if (_isClosed)
-                    {
-                        Monitor.Pulse(_lock);
-                        return;
-                    }
+                byte streamId = _availableStreamIds.Take();
 
-                    queryInfo = _pendingQueries.Dequeue();
+                if (_isClosed == 1)
+                {
+                    // abort queries.
+                    queryInfo.NotifyError(new OperationCanceledException());
+                    _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
+                    continue;
                 }
 
                 try
@@ -285,28 +284,10 @@ namespace CassandraSharp.Transport
                     // acquire the global lock to write the request
                     InstrumentationToken token = queryInfo.Token;
                     bool tracing = 0 != (token.ExecutionFlags & ExecutionFlags.ServerTracing);
-                    using (BufferingFrameWriter bufferingFrameWriter = new BufferingFrameWriter(tracing))
+                    using (var bufferingFrameWriter = new BufferingFrameWriter(tracing))
                     {
                         queryInfo.Write(bufferingFrameWriter);
-
-                        byte streamId;
-                        lock (_lock)
-                        {
-                            while (!_isClosed && 0 == _availableStreamIds.Count)
-                            {
-                                Monitor.Wait(_lock);
-                            }
-                            if (_isClosed)
-                            {
-                                queryInfo.NotifyError(new OperationCanceledException());
-                                _instrumentation.ClientTrace(token, EventType.Cancellation);
-                                Monitor.Pulse(_lock);
-                                return;
-                            }
-
-                            streamId = _availableStreamIds.Pop();
-                        }
-
+                        
                         _logger.Debug("Starting writing frame for stream {0}@{1}", streamId, Endpoint);
                         _instrumentation.ClientTrace(token, EventType.BeginWrite);
 
@@ -331,7 +312,8 @@ namespace CassandraSharp.Transport
 
         private void ReadResponse()
         {
-            while (true)
+            var token = running.Token;
+            while (token.IsCancellationRequested == false)
             {
                 IFrameReader frameReader = null;
                 try
@@ -354,20 +336,16 @@ namespace CassandraSharp.Transport
 
         private QueryInfo GetAndReleaseQueryInfo(IFrameReader frameReader)
         {
+            if (_isClosed == 1)
+            {
+                throw new OperationCanceledException();
+            }
+
             QueryInfo queryInfo;
             byte streamId = frameReader.StreamId;
-            lock (_lock)
-            {
-                Monitor.Pulse(_lock);
-                if (_isClosed)
-                {
-                    throw new OperationCanceledException();
-                }
-
-                queryInfo = _queryInfos[streamId];
-                _queryInfos[streamId] = null;
-                _availableStreamIds.Push(streamId);
-            }
+            queryInfo = _queryInfos[streamId];
+            _queryInfos[streamId] = null;
+            _availableStreamIds.Add(streamId);
 
             return queryInfo;
         }
