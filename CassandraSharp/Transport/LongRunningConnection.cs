@@ -85,6 +85,7 @@ namespace CassandraSharp.Transport
                 {
                     _availableStreamIds.Add(streamId);
                 }
+                running = new CancellationTokenSource();
 
                 _config = config;
                 _keyspaceConfig = keyspaceConfig;
@@ -138,7 +139,7 @@ namespace CassandraSharp.Transport
                 _pushResult = _config.ReceiveBuffering
                                       ? (Action<QueryInfo, IFrameReader, bool>)((qi, fr, a) => Task.Factory.StartNew(() => PushResult(qi, fr, a)))
                                       : PushResult;
-                running = new CancellationTokenSource();
+
                 _responseWorker = Task.Factory.StartNew(() => RunWorker(ReadResponse), TaskCreationOptions.LongRunning);
                 _queryWorker = Task.Factory.StartNew(() => RunWorker(SendQuery), TaskCreationOptions.LongRunning);
 
@@ -274,9 +275,10 @@ namespace CassandraSharp.Transport
                 if (_isClosed == 1)
                 {
                     // abort queries.
-                    queryInfo.NotifyError(new OperationCanceledException());
+                    var ex = new OperationCanceledException();
+                    queryInfo.NotifyError(ex);
                     _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
-                    continue;
+                    throw ex;
                 }
 
                 try
