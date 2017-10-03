@@ -62,11 +62,17 @@ namespace CassandraSharp.Discovery
 
         public event TopologyUpdate OnTopologyUpdate;
 
-        private void Notify(IPAddress rpcAddress, string datacenter, string rack, IEnumerable<string> tokens)
+        private void Notify(IPAddress rpcAddress, string datacenter, string rack, IEnumerable<string> tokens, string release_version, string current_version)
         {
             if (!Network.IsValidEndpoint(rpcAddress))
             {
                 _logger.Warn("Discovered invalid endpoint {0}", rpcAddress);
+                return;
+            }
+            
+            if (release_version != current_version)
+            {
+                // skip mis matched version.
                 return;
             }
 
@@ -99,16 +105,23 @@ namespace CassandraSharp.Discovery
         {
             try
             {
+                // system.local contains release_version which current usage.
+                // system.peers contains old versions, we only need current release version.
+
                 IConnection connection = _cluster.GetConnection();
 
-                var obsLocalPeer = new CqlQuery<DiscoveredPeer>(connection, ConsistencyLevel.ONE, ExecutionFlags.None, "select data_center,rack,tokens from system.local",
-                                                                _peerFactory);
-                obsLocalPeer.Subscribe(x => Notify(connection.Endpoint, x.Datacenter, x.Rack, x.Tokens), ex => _logger.Error("SystemPeersDiscoveryService failed with error {0}", ex));
+                var obsLocalPeer = new CqlQuery<DiscoveredPeer>(connection, ConsistencyLevel.ONE, ExecutionFlags.None, 
+                    "select data_center,rack,tokens,release_version from system.local", _peerFactory);
 
-                var obsPeers =
-                        new CqlQuery<DiscoveredPeer>(connection, ConsistencyLevel.ONE, ExecutionFlags.None, "select rpc_address,data_center,rack,tokens from system.peers",
-                                                     _peerFactory);
-                obsPeers.Subscribe(x => Notify(x.RpcAddress, x.Datacenter, x.Rack, x.Tokens), ex => _logger.Error("SystemPeersDiscoveryService failed with error {0}", ex));
+                obsLocalPeer.Subscribe(x =>
+                {
+                    Notify(connection.Endpoint, x.Datacenter, x.Rack, x.Tokens, x.release_version, x.release_version);
+                    var obsPeers = new CqlQuery<DiscoveredPeer>(connection, ConsistencyLevel.ONE, ExecutionFlags.None,
+                        "select rpc_address,data_center,rack,tokens,release_version from system.peers", _peerFactory);
+                    obsPeers.Subscribe(p => Notify(p.RpcAddress, p.Datacenter, p.Rack, p.Tokens, p.release_version, x.release_version),
+                        ex => _logger.Error("SystemPeersDiscoveryService failed with error {0}", ex));
+                }, ex => _logger.Error("SystemPeersDiscoveryService failed with error {0}", ex));
+
             }
             catch (Exception ex)
             {
@@ -125,6 +138,8 @@ namespace CassandraSharp.Discovery
             public string Rack { get; internal set; }
 
             public string Datacenter { get; internal set; }
+
+            public string release_version { get; internal set; }
         }
     }
 }

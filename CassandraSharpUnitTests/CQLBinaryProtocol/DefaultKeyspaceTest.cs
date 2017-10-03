@@ -41,7 +41,11 @@ namespace CassandraSharpUnitTests.CQLBinaryProtocol
 
             var config = new ClusterConfig
             {
-                Endpoints = new EndpointsConfig { Servers = new[] { CassandraServerIp } },
+                Endpoints = new EndpointsConfig
+                {
+                    Servers = new[] { CassandraServerIp },
+                    Discovery = new DiscoveryConfig() {  Type = "SystemPeers" },
+                },                
                 DefaultKeyspace =
                     new KeyspaceConfig
                     {
