@@ -186,6 +186,9 @@ namespace CassandraSharp.Transport
             // wait for worker threads to gracefully shutdown
             ExceptionExtensions.SafeExecute(() => _responseWorker.Wait());
             ExceptionExtensions.SafeExecute(() => _queryWorker.Wait());
+
+            _availableStreamIds.SafeDispose();
+            _pendingQueries.SafeDispose();
         }
 
         public static void SetTcpKeepAlive(Socket socket, int keepaliveTime, int keepaliveInterval)
@@ -283,7 +286,6 @@ namespace CassandraSharp.Transport
 
                 try
                 {
-                    // acquire the global lock to write the request
                     InstrumentationToken token = queryInfo.Token;
                     bool tracing = 0 != (token.ExecutionFlags & ExecutionFlags.ServerTracing);
                     using (var bufferingFrameWriter = new BufferingFrameWriter(tracing))

@@ -47,10 +47,13 @@ namespace CassandraSharp.Discovery
             _logger = logger;
             _cluster = cluster;
             _config = config;
-            _timer = new Timer(config.Interval*1000);
-            _timer.Elapsed += (s, e) => TryDiscover();
-            _timer.AutoReset = true;
-            _timer.Start();
+            if (config.Interval > 0)
+            {
+                _timer = new Timer(config.Interval * 1000);
+                _timer.Elapsed += (s, e) => TryDiscover();
+                _timer.AutoReset = true;
+                _timer.Start();
+            }
 
             TryDiscover();
         }

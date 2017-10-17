@@ -23,7 +23,7 @@ namespace CassandraSharp.Config
         public DiscoveryConfig()
         {
             Type = "Default";
-            Interval = 300;
+            Interval = 0;
         }
 
         [XmlAttribute("type")]
