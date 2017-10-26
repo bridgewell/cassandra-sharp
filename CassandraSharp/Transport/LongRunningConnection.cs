@@ -45,9 +45,20 @@ namespace CassandraSharp.Transport
         private readonly ILogger _logger;
 
         /// <summary>
-        /// available stream ids
+        /// available stream ids ,
+        /// It should be easier to use BlockCollection class,
+        /// but maybe BlockCollection would have GC issues for large use.
+        /// And we could use eaiser byte array plus index to fix the problem.
+        /// 1 means queries is using the index, we cannot use it as next query,
+        /// 0 for no query using, so can use it.
+        /// and use index to solve multi-thread issues.
         /// </summary>
-        private readonly BlockingCollection<byte> _availableStreamIds = new BlockingCollection<byte>();
+        private byte[] _availableStreamIds = new byte[MAX_STREAMID];
+
+        /// <summary>
+        /// next available stream id index
+        /// </summary>
+        private int _availableStreamIdIndex = 0;
 
         /// <summary>
         /// pending queries before send to server
@@ -81,9 +92,10 @@ namespace CassandraSharp.Transport
         {
             try
             {
+                // empty _availableStreamIds , indicates that we can use it.
                 for (byte streamId = 0; streamId < MAX_STREAMID; ++streamId)
                 {
-                    _availableStreamIds.Add(streamId);
+                    _availableStreamIds[streamId] = 0;
                 }
                 running = new CancellationTokenSource();
 
@@ -187,7 +199,6 @@ namespace CassandraSharp.Transport
             ExceptionExtensions.SafeExecute(() => _responseWorker.Wait());
             ExceptionExtensions.SafeExecute(() => _queryWorker.Wait());
 
-            _availableStreamIds.SafeDispose();
             _pendingQueries.SafeDispose();
         }
 
@@ -269,11 +280,62 @@ namespace CassandraSharp.Transport
             }
         }
 
+        private byte AcquireNextStreamId()
+        {
+            var idx = Interlocked.Increment(ref _availableStreamIdIndex);
+            if (idx < MAX_STREAMID)
+            {
+                var isUsing = _availableStreamIds[idx];
+                if (isUsing == 0)
+                {
+                    _availableStreamIds[idx] = 1;
+                    return (byte)idx;
+                }
+            }
+
+            // now we need scan a loop, or reset the index to zero to find next available index
+            // if we cannot find anyone, only to sleep a while, and find again.
+            int SleepGapMS = 10;
+            while (running.IsCancellationRequested == false)
+            {
+                // if we overflow, need reset
+                if (idx >= MAX_STREAMID)
+                {
+                    var oldidx = Interlocked.CompareExchange(ref _availableStreamIdIndex, 0, idx);
+                    if (oldidx != idx)
+                    {
+                        // exchanged failed, again
+                        idx = Interlocked.Increment(ref _availableStreamIdIndex);
+                        continue;
+                    }
+                }
+
+                // find until overflow.
+                while (idx < MAX_STREAMID)
+                {
+                    var isUsing = _availableStreamIds[idx];
+                    if (isUsing == 0)
+                    {
+                        _availableStreamIds[idx] = 1;
+                        return (byte)idx;
+                    }
+                }
+
+                // failed , now we need sleep and try again.
+                _logger.Warn("Cassandra driver LongRunning connection meet stream id exhausted, wait a while and try again.");
+                Thread.Sleep(TimeSpan.FromMilliseconds(SleepGapMS));
+                SleepGapMS = SleepGapMS * 2; // next time, sleep more!
+            }
+
+            // connection is closed!
+            return 0;
+        }    
+
         private void SendQuery()
         {
             foreach (var queryInfo in _pendingQueries.GetConsumingEnumerable())
             {
-                byte streamId = _availableStreamIds.Take();
+                byte streamId = AcquireNextStreamId();
 
                 if (_isClosed == 1)
                 {
@@ -349,7 +411,7 @@ namespace CassandraSharp.Transport
             byte streamId = frameReader.StreamId;
             queryInfo = _queryInfos[streamId];
             _queryInfos[streamId] = null;
-            _availableStreamIds.Add(streamId);
+            _availableStreamIds[streamId] = 0; // free the streamId
 
             return queryInfo;
         }
