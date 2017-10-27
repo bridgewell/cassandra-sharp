@@ -18,80 +18,96 @@ namespace CassandraSharp.Recovery
     using System;
     using System.Collections.Generic;
     using System.Net;
-    using System.Timers;
     using CassandraSharp.Config;
     using CassandraSharp.Extensibility;
     using CassandraSharp.Utils;
+    using System.Threading.Tasks;
+    using System.Collections.Concurrent;
+    using System.Threading;
 
     internal sealed class AttemptConnectRecoveryService : IRecoveryService
     {
-        private readonly object _lock;
-
         private readonly ILogger _logger;
 
-        private readonly Timer _timer;
+        private readonly Task _recoveryTask;
 
         private readonly List<RecoveryItem> _toRecover;
 
+        /// <summary>
+        /// use to read/write _toRecover
+        /// </summary>
+        private readonly object _lock;
+
+        private readonly CancellationTokenSource taskCTS;
+
         public AttemptConnectRecoveryService(ILogger logger, RecoveryConfig config)
         {
+            _lock = new object();
             _logger = logger;
             _toRecover = new List<RecoveryItem>();
-            _timer = new Timer(config.Interval * 1000);
-            _timer.Elapsed += (s, e) => TryRecover();
-            _timer.AutoReset = false;
-            _lock = new object();
+            taskCTS = new CancellationTokenSource();
+            _recoveryTask = Task.Factory.StartNew(
+                async () =>
+                {
+                    var token = taskCTS.Token;
+                    while (token.IsCancellationRequested == false)
+                    {
+                        TryRecover();
+                        await Task.Delay(TimeSpan.FromSeconds(10), token);
+                    }
+                });
         }
 
         public void Recover(IPAddress endpoint, IConnectionFactory connectionFactory, Action<IConnection> clientRecoveredCallback)
         {
             lock (_lock)
             {
-                RecoveryItem recoveryItem = new RecoveryItem(endpoint, connectionFactory, clientRecoveredCallback);
-                _toRecover.Add(recoveryItem);
-                _timer.Start();
+                _toRecover.Add(new RecoveryItem(endpoint, connectionFactory, clientRecoveredCallback));
             }
         }
 
         public void Dispose()
         {
-            _timer.SafeDispose();
+            taskCTS.Cancel();
         }
 
         private void TryRecover()
         {
-            _logger.Debug("Trying to recover endpoints");
-
-            List<RecoveryItem> toRecover;
+            RecoveryItem[] toRecover;
             lock (_lock)
             {
-                toRecover = new List<RecoveryItem>(_toRecover);
+                toRecover = _toRecover.ToArray();
             }
 
             foreach (RecoveryItem recoveryItem in toRecover)
             {
                 try
                 {
-                    _logger.Debug("Trying to recover endpoint {0}", recoveryItem.Endpoint);
-                    IConnection client = recoveryItem.ConnectionFactory.Create(recoveryItem.Endpoint);
-                    _logger.Debug("Endpoint {0} successfully recovered", recoveryItem.Endpoint);
-
-                    lock (_lock)
+                    _logger.Debug("Trying to count recover endpoint {0}", recoveryItem.Endpoint);
+                    recoveryItem.RecoveryTryCount++;
+                    if (recoveryItem.RecoveryBackwardCounter <= 0)
                     {
-                        _toRecover.Remove(recoveryItem);
-                    }
+                        _logger.Debug("Trying to recover endpoint {0}", recoveryItem.Endpoint);
+                        IConnection client = recoveryItem.ConnectionFactory.Create(recoveryItem.Endpoint);
+                        _logger.Debug("Endpoint {0} successfully recovered", recoveryItem.Endpoint);
 
-                    recoveryItem.ClientRecoveredCallback(client);
+                        lock (_lock)
+                        {
+                            _toRecover.Remove(recoveryItem);
+                        }
+
+                        recoveryItem.ClientRecoveredCallback(client);
+                    }
+                    else
+                    {
+                        recoveryItem.RecoveryBackwardCounter--;
+                    }
                 }
                 catch (Exception ex)
                 {
+                    recoveryItem.RecoveryBackwardCounter = 1 << recoveryItem.RecoveryTryCount;
                     _logger.Debug("Failed to recover endpoint {0} with error {1}", recoveryItem.Endpoint, ex);
                 }
-            }
-
-            lock (_lock)
-            {
-                _timer.Enabled = 0 < _toRecover.Count;
             }
         }
 
@@ -102,6 +118,8 @@ namespace CassandraSharp.Recovery
                 Endpoint = endpoint;
                 ConnectionFactory = connectionFactory;
                 ClientRecoveredCallback = clientRecoveredCallback;
+                RecoveryTryCount = 0;
+                RecoveryBackwardCounter = 0;
             }
 
             public IPAddress Endpoint { get; private set; }
@@ -109,6 +127,10 @@ namespace CassandraSharp.Recovery
             public IConnectionFactory ConnectionFactory { get; private set; }
 
             public Action<IConnection> ClientRecoveredCallback { get; private set; }
+
+            public int RecoveryTryCount { get; set; }
+
+            public int RecoveryBackwardCounter { get; set; }
         }
     }
 }

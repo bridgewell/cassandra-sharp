@@ -308,6 +308,11 @@ namespace CassandraSharp.Transport
                         idx = Interlocked.Increment(ref _availableStreamIdIndex);
                         continue;
                     }
+                    else
+                    {
+                        // successed, get new idx
+                        idx = Interlocked.Increment(ref _availableStreamIdIndex);
+                    }
                 }
 
                 // find until overflow.
@@ -319,6 +324,7 @@ namespace CassandraSharp.Transport
                         _availableStreamIds[idx] = 1;
                         return (byte)idx;
                     }
+                    idx = Interlocked.Increment(ref _availableStreamIdIndex);
                 }
 
                 // failed , now we need sleep and try again.

@@ -220,7 +220,7 @@ namespace CassandraSharpUnitTests.Stress
 
                 proxy.EnableKiller();
 
-                for (int i = 0; i < 100; ++i)
+                for (int i = 0; i < 500; ++i)
                 {
                     int attempt = 0;
                     while (true)
