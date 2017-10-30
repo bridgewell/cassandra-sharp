@@ -46,16 +46,21 @@ namespace CassandraSharp.Recovery
             _logger = logger;
             _toRecover = new List<RecoveryItem>();
             taskCTS = new CancellationTokenSource();
+            var token = taskCTS.Token;
+            if (config.Interval <= 0)
+            {
+                // not allow! at least 1.
+                config.Interval = 1;
+            }
             _recoveryTask = Task.Factory.StartNew(
                 async () =>
                 {
-                    var token = taskCTS.Token;
                     while (token.IsCancellationRequested == false)
                     {
                         TryRecover();
-                        await Task.Delay(TimeSpan.FromSeconds(10), token);
+                        await Task.Delay(TimeSpan.FromSeconds(config.Interval), token);
                     }
-                });
+                }, TaskCreationOptions.LongRunning);
         }
 
         public void Recover(IPAddress endpoint, IConnectionFactory connectionFactory, Action<IConnection> clientRecoveredCallback)

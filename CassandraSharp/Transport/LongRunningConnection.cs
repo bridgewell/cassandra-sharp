@@ -63,7 +63,7 @@ namespace CassandraSharp.Transport
         /// <summary>
         /// pending queries before send to server
         /// </summary>
-        private readonly BlockingCollection<QueryInfo> _pendingQueries = new BlockingCollection<QueryInfo>();
+        private readonly BlockingCollection<QueryInfo> _pendingQueries;
 
         private readonly CancellationTokenSource running;
 
@@ -72,7 +72,7 @@ namespace CassandraSharp.Transport
         /// <summary>
         /// sent queries to server, but not get response yet.
         /// </summary>
-        private readonly QueryInfo[] _queryInfos = new QueryInfo[MAX_STREAMID];
+        private readonly QueryInfo[] _queryInfos;
 
         private readonly Task _queryWorker;
 
@@ -92,11 +92,6 @@ namespace CassandraSharp.Transport
         {
             try
             {
-                // empty _availableStreamIds , indicates that we can use it.
-                for (byte streamId = 0; streamId < MAX_STREAMID; ++streamId)
-                {
-                    _availableStreamIds[streamId] = 0;
-                }
                 running = new CancellationTokenSource();
 
                 _config = config;
@@ -148,6 +143,17 @@ namespace CassandraSharp.Transport
                     SetTcpKeepAlive(_socket, _config.KeepAliveTime, 1000);
                 }
 
+                // empty _availableStreamIds , indicates that we can use it.
+                for (byte streamId = 0; streamId < MAX_STREAMID; ++streamId)
+                {
+                    _availableStreamIds[streamId] = 0;
+                }
+                _queryInfos = new QueryInfo[MAX_STREAMID];
+                for (int i = 0; i < _queryInfos.Length; i++)
+                {
+                    _queryInfos[i] = null;
+                }
+                _pendingQueries = new BlockingCollection<QueryInfo>();
                 _pushResult = _config.ReceiveBuffering
                                       ? (Action<QueryInfo, IFrameReader, bool>)((qi, fr, a) => Task.Factory.StartNew(() => PushResult(qi, fr, a)))
                                       : PushResult;
@@ -233,26 +239,36 @@ namespace CassandraSharp.Transport
                 return;
             }
             running.Cancel();
-            _pendingQueries.CompleteAdding();
+
+            // if we connect failed, _pendingQueries, _queryInfos will be null.
+            _pendingQueries?.CompleteAdding();
 
             // abort all pending queries
-            OperationCanceledException canceledException = new OperationCanceledException();
-            for (int i = 0; i < _queryInfos.Length; ++i)
+            if (_queryInfos != null)
             {
-                queryInfo = _queryInfos[i];
-                if (null != queryInfo)
+                var canceledException = new OperationCanceledException();
+                for (int i = 0; i < _queryInfos.Length; ++i)
+                {
+                    queryInfo = _queryInfos[i];
+                    if (null != queryInfo)
+                    {
+                        queryInfo.NotifyError(canceledException);
+                        _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
+
+                        _queryInfos[i] = null;
+                    }
+                }
+            }
+
+            // cleanup not sending queries.
+            if (_pendingQueries != null)
+            {
+                var canceledException = new OperationCanceledException();
+                while (_pendingQueries.TryTake(out queryInfo))
                 {
                     queryInfo.NotifyError(canceledException);
                     _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
-
-                    _queryInfos[i] = null;
                 }
-            }
-            // cleanup not sending queries.
-            while (_pendingQueries.TryTake(out queryInfo))
-            {
-                queryInfo.NotifyError(canceledException);
-                _instrumentation.ClientTrace(queryInfo.Token, EventType.Cancellation);
             }
 
             // we have now the guarantee this instance is destroyed once
