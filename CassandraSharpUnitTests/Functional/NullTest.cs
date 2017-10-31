@@ -100,6 +100,9 @@ namespace CassandraSharpUnitTests.Functional
                 Assert.IsTrue(selectBag.Keys.Contains("a"));
                 Assert.IsTrue(1 == (int) selectBag["a"]);
                 Assert.IsTrue(null == selectBag["b"]);
+                // to test case in-sensistive
+                Assert.IsTrue(1 == (int)selectBag["A"]);
+                Assert.IsTrue(null == selectBag["B"]);
             }
         }
     }

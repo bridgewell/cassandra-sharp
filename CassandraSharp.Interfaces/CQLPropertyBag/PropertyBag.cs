@@ -21,20 +21,18 @@ namespace CassandraSharp.CQLPropertyBag
 
     public sealed class PropertyBag
     {
-        private readonly Dictionary<string, object> _map = new Dictionary<string, object>();
+        private readonly Dictionary<string, object> _map = new Dictionary<string, object>(System.StringComparer.OrdinalIgnoreCase);
 
         public object this[string name]
         {
             get
             {
-                string lowName = name.ToLower(CultureInfo.InvariantCulture);
-                return _map[lowName];
+                return _map[name];
             }
 
             set
             {
-                string lowName = name.ToLower(CultureInfo.InvariantCulture);
-                _map[lowName] = value;
+                _map[name] = value;
             }
         }
 
