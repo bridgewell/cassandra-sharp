@@ -25,6 +25,7 @@ namespace CassandraSharp.Cluster
             {
                     {"Default", typeof(SingleConnectionPerEndpointCluster)},
                     {"SingleConnectionPerEndpoint", typeof(SingleConnectionPerEndpointCluster)},
+                    {"ConnectionPoolEndpoint", typeof(ConnectionPoolEndpointCluster)},
             };
 
         public IDictionary<string, Type> Definition

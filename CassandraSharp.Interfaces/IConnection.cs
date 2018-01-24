@@ -28,6 +28,8 @@ namespace CassandraSharp
 
         ExecutionFlags DefaultExecutionFlags { get; }
 
+        int GetAvailableStreamIdCount { get; }
+
         event EventHandler<FailureEventArgs> OnFailure;
 
         void Execute<T>(Action<IFrameWriter> writer, Func<IFrameReader, IEnumerable<T>> reader, InstrumentationToken token, IObserver<T> observer);

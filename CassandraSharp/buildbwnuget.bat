@@ -1,0 +1,1 @@
+NuGet.exe pack bw-cassandra-sharp.csproj -Prop Configuration=Release

@@ -42,5 +42,10 @@ namespace CassandraSharp
         Register = 0x0B,
 
         Event = 0x0C,
+
+        /// <summary>
+        /// only suppport for cql 2.0 or later
+        /// </summary>
+        Batch = 0x0D,
     }
 }

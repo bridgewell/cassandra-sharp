@@ -60,6 +60,16 @@ namespace CassandraSharp.Transport
         /// </summary>
         private int _availableStreamIdIndex = 0;
 
+        private int _availableStreamIdCount = 0;
+
+        public int GetAvailableStreamIdCount
+        {
+            get
+            {
+                return _availableStreamIdCount;
+            }
+        }
+
         /// <summary>
         /// pending queries before send to server
         /// </summary>
@@ -148,6 +158,7 @@ namespace CassandraSharp.Transport
                 {
                     _availableStreamIds[streamId] = 0;
                 }
+                _availableStreamIdCount = MAX_STREAMID;
                 _queryInfos = new QueryInfo[MAX_STREAMID];
                 for (int i = 0; i < _queryInfos.Length; i++)
                 {
@@ -296,54 +307,64 @@ namespace CassandraSharp.Transport
             }
         }
 
-        private byte AcquireNextStreamId()
+        private bool TryAcquireStreamId(int current_available_idx)
+        {
+            if (_availableStreamIds[current_available_idx] == 0)
+            {
+                _availableStreamIds[current_available_idx] = 1;
+                Interlocked.Decrement(ref _availableStreamIdCount);
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+
+        private int GetCurrentAvailableStreamIndex()
         {
             var idx = Interlocked.Increment(ref _availableStreamIdIndex);
             if (idx < MAX_STREAMID)
+                return idx;
+            else
             {
-                var isUsing = _availableStreamIds[idx];
-                if (isUsing == 0)
+                // overflowed. reset to zero
+                var oldidx = Interlocked.CompareExchange(ref _availableStreamIdIndex, 0, idx);
+                if (oldidx != idx)
                 {
-                    _availableStreamIds[idx] = 1;
-                    return (byte)idx;
+                    // exchanged failed... we need do it again.
+                    return GetCurrentAvailableStreamIndex();
+                }
+                else
+                {
+                    // exchanged successed.
+                    return 0;
                 }
             }
+        }
+
+        private byte AcquireNextStreamId()
+        {
+            var idx = GetCurrentAvailableStreamIndex();
+            if (TryAcquireStreamId(idx))
+                return (byte)idx;
 
             // now we need scan a loop, or reset the index to zero to find next available index
             // if we cannot find anyone, only to sleep a while, and find again.
             int SleepGapMS = 10;
             while (running.IsCancellationRequested == false)
             {
-                // if we overflow, need reset
-                if (idx >= MAX_STREAMID)
+                if (_availableStreamIdCount > 0)
                 {
-                    var oldidx = Interlocked.CompareExchange(ref _availableStreamIdIndex, 0, idx);
-                    if (oldidx != idx)
+                    // try max times.
+                    for (int i = 0; i < MAX_STREAMID; i++)
                     {
-                        // exchanged failed, again
-                        idx = Interlocked.Increment(ref _availableStreamIdIndex);
-                        continue;
-                    }
-                    else
-                    {
-                        // successed, get new idx
-                        idx = Interlocked.Increment(ref _availableStreamIdIndex);
+                        var tryidx = GetCurrentAvailableStreamIndex();
+                        if (TryAcquireStreamId(tryidx))
+                            return (byte)tryidx;
                     }
                 }
-
-                // find until overflow.
-                while (idx < MAX_STREAMID)
-                {
-                    var isUsing = _availableStreamIds[idx];
-                    if (isUsing == 0)
-                    {
-                        _availableStreamIds[idx] = 1;
-                        return (byte)idx;
-                    }
-                    idx = Interlocked.Increment(ref _availableStreamIdIndex);
-                }
-
-                // failed , now we need sleep and try again.
                 _logger.Warn("Cassandra driver LongRunning connection meet stream id exhausted, wait a while and try again.");
                 Thread.Sleep(TimeSpan.FromMilliseconds(SleepGapMS));
                 SleepGapMS = SleepGapMS * 2; // next time, sleep more!
@@ -351,7 +372,7 @@ namespace CassandraSharp.Transport
 
             // connection is closed!
             return 0;
-        }    
+        }
 
         private void SendQuery()
         {
@@ -434,7 +455,7 @@ namespace CassandraSharp.Transport
             queryInfo = _queryInfos[streamId];
             _queryInfos[streamId] = null;
             _availableStreamIds[streamId] = 0; // free the streamId
-
+            Interlocked.Increment(ref _availableStreamIdCount);
             return queryInfo;
         }
 
