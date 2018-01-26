@@ -35,7 +35,7 @@ namespace CassandraSharp.Transport
                                                   IDisposable
     {
         public const byte MAX_STREAMID = 0x80;
-        public const byte SUGGEST_AVIALABLE_STREAM_COUNT = 0x40;
+        public const byte SUGGEST_AVIALABLE_STREAM_COUNT = 30;
 
         private readonly TransportConfig _config;
 

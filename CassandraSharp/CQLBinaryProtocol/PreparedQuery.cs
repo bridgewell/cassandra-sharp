@@ -73,9 +73,6 @@ namespace CassandraSharp.CQLBinaryProtocol
                 if (_connections.Length > 0)
                 {
                     Array.Copy(_connections, 0, newConnections, 0, _connections.Length);
-                }
-                else
-                {
                     _cluster.GetLogger.Info("prepared query extended to connection count {0}", newConnections.Length);
                 }
 
