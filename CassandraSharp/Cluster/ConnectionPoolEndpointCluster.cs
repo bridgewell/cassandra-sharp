@@ -36,8 +36,6 @@ namespace CassandraSharp.Cluster
 
         private readonly IRecoveryService _recoveryService;
 
-        public int MinAvaialableStreamIdCount = 10;
-
         public ConnectionPoolEndpointCluster(IEndpointStrategy endpointStrategy, ILogger logger,
                                                   IConnectionFactory connectionFactory, IRecoveryService recoveryService, IPartitioner partitioner)
         {
@@ -47,8 +45,11 @@ namespace CassandraSharp.Cluster
             _connectionFactory = connectionFactory;
             _recoveryService = recoveryService;
             Partitioner = partitioner;
+            logger?.Info("ConnectionPoolEndpointCluster created.");
         }
 
+        public ILogger GetLogger { get { return _logger; } }
+        
         public IPartitioner Partitioner { get; private set; }
 
         public event ClusterClosed OnClosed;
@@ -86,7 +87,7 @@ namespace CassandraSharp.Cluster
 
                     var connections = _ip2Connection.GetOrAdd(endpoint, ep => new IConnection[] { });
 
-                    var availableConnection = connections.Where(c => c.GetAvailableStreamIdCount > MinAvaialableStreamIdCount).FirstOrDefault();
+                    var availableConnection = connections.Where(c => c.GetAvailableStreamIdCount > Transport.LongRunningConnection.SUGGEST_AVIALABLE_STREAM_COUNT).FirstOrDefault();
                     if (availableConnection != null)
                         return availableConnection;
 

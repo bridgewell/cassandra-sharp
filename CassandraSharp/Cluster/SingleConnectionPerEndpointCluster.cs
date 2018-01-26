@@ -47,6 +47,8 @@ namespace CassandraSharp.Cluster
             Partitioner = partitioner;
         }
 
+        public ILogger GetLogger { get { return _logger; } }
+
         public IPartitioner Partitioner { get; private set; }
 
         public event ClusterClosed OnClosed;

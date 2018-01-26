@@ -34,7 +34,8 @@ namespace CassandraSharp.Transport
     internal sealed class LongRunningConnection : IConnection,
                                                   IDisposable
     {
-        private const byte MAX_STREAMID = 0x80;
+        public const byte MAX_STREAMID = 0x80;
+        public const byte SUGGEST_AVIALABLE_STREAM_COUNT = 0x40;
 
         private readonly TransportConfig _config;
 
@@ -365,7 +366,7 @@ namespace CassandraSharp.Transport
                             return (byte)tryidx;
                     }
                 }
-                _logger.Warn("Cassandra driver LongRunning connection meet stream id exhausted, wait a while and try again.");
+                _logger.Warn("Cassandra driver connection meet streamid exhausted, wait a while and try again.");
                 Thread.Sleep(TimeSpan.FromMilliseconds(SleepGapMS));
                 SleepGapMS = SleepGapMS * 2; // next time, sleep more!
             }

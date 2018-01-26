@@ -2,12 +2,12 @@
 <package>
   <metadata>
     <id>bw-cassandra-sharp</id>
-    <version>2.8.0.0</version>
+    <version>2.9.0.0</version>
 	<title>cassandra-sharp - high performance .NET driver for Apache Cassandra</title>
     <authors>Lane</authors>
     <owners>Lane</owners>
     <licenseUrl>http://www.apache.org/licenses/LICENSE-2.0</licenseUrl>
-    <projectUrl>https://github.com/laneser/cassandra-sharp</projectUrl>
+    <projectUrl>https://github.com/bridgewell/cassandra-sharp/</projectUrl>
     <requireLicenseAcceptance>true</requireLicenseAcceptance>
     <summary>cassandra-sharp is a high performance .NET driver for Apache Cassandra, fully supporting asynchronous operations (using TPL and Rx) and CQL 3 binary protocol.</summary>
     <description>cassandra-sharp - high performance .NET driver for Apache Cassandra.
