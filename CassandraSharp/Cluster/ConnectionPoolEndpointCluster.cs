@@ -103,7 +103,7 @@ namespace CassandraSharp.Cluster
                             },
                             (ep, oldconnections) =>
                             {
-                                var newConnections = new IConnection[oldconnections.Length];
+                                var newConnections = new IConnection[oldconnections.Length + 1];
                                 newConnections[0] = connection;
                                 for (int i = 0; i < oldconnections.Length; i++)
                                     newConnections[i + 1] = oldconnections[i];
@@ -184,7 +184,7 @@ namespace CassandraSharp.Cluster
                 },
                 (ep, oldconnections) =>
                 {
-                    var newConnections = new IConnection[oldconnections.Length];
+                    var newConnections = new IConnection[oldconnections.Length + 1];
                     newConnections[0] = connection;
                     for (int i = 0; i < oldconnections.Length; i++)
                         newConnections[i + 1] = oldconnections[i];
