@@ -23,7 +23,7 @@ namespace CassandraSharp.Cluster
     {
         private static readonly IDictionary<string, Type> _def = new Dictionary<string, Type>
             {
-                    {"Default", typeof(ConnectionPoolEndpointCluster)},
+                    {"Default", typeof(SingleConnectionPerEndpointCluster)},
                     {"SingleConnectionPerEndpoint", typeof(SingleConnectionPerEndpointCluster)},
                     {"ConnectionPoolEndpoint", typeof(ConnectionPoolEndpointCluster)},
             };

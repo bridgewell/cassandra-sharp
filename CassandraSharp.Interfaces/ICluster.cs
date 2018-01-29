@@ -27,7 +27,9 @@ namespace CassandraSharp
 
         event ClusterClosed OnClosed;
 
-        IConnection GetConnection(BigInteger? token = null);
+        IConnection GetConnection(BigInteger? token = null, bool forceCreateNew = false);
+
+        void DisposeConnection(IConnection conn);
 
         ILogger GetLogger { get; }
     }

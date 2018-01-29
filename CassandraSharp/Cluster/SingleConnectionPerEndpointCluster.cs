@@ -70,7 +70,13 @@ namespace CassandraSharp.Cluster
             }
         }
 
-        public IConnection GetConnection(BigInteger? token)
+        public void DisposeConnection(IConnection conn)
+        {
+            // we should only receive force created conn to dispose it.
+            conn.SafeDispose();
+        }
+
+        public IConnection GetConnection(BigInteger? token, bool ForceCreateNew = false)
         {
             IConnection connection = null;
             try
@@ -84,10 +90,17 @@ namespace CassandraSharp.Cluster
                         throw new ArgumentException("Can't find any valid endpoint");
                     }
 
-                    connection = _ip2Connection.GetOrAdd(endpoint, ep => CreateTransportOrMarkEndpointForRecovery(ep));
-                    if (connection == null)
+                    if (ForceCreateNew)
                     {
-                        _ip2Connection.TryRemove(endpoint, out connection);
+                        connection = CreateTransportOrMarkEndpointForRecovery(endpoint);
+                    }
+                    else
+                    {
+                        connection = _ip2Connection.GetOrAdd(endpoint, ep => CreateTransportOrMarkEndpointForRecovery(ep));
+                        if (connection == null)
+                        {
+                            _ip2Connection.TryRemove(endpoint, out connection);
+                        }
                     }
                 }
                 return connection;

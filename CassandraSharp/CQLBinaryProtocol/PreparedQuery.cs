@@ -36,7 +36,12 @@ namespace CassandraSharp.CQLBinaryProtocol
 
         private IColumnSpec[] _columnSpecs;
 
-        private volatile IConnection[] _connections;
+        /// <summary>
+        /// connections which maintains by this prepared query.
+        /// </summary>
+        private volatile IConnection[] appendConnections;
+
+        private volatile IConnection _connection;
 
         private byte[] _id;
 
@@ -49,12 +54,13 @@ namespace CassandraSharp.CQLBinaryProtocol
             _factoryIn = factoryIn;
             _factoryOut = factoryOut;
             _cql = cql;
-            _connections = new IConnection[] { };
+            _connection = null;
+            appendConnections = new IConnection[] { };
         }
 
         private IConnection peakConnection()
         {
-            var currentConnections = _connections;
+            var currentConnections = appendConnections;
             var availableConnection = currentConnections.Where(c => c.GetAvailableStreamIdCount > Transport.LongRunningConnection.SUGGEST_AVIALABLE_STREAM_COUNT).FirstOrDefault();
             if (availableConnection != null)
                 return availableConnection;
@@ -63,20 +69,20 @@ namespace CassandraSharp.CQLBinaryProtocol
             {
                 // when we enter locked section, we can check again! 
                 // in case we were blocked by previous lock, then we can get new one.
-                currentConnections = _connections;
+                currentConnections = appendConnections;
                 availableConnection = currentConnections.Where(c => c.GetAvailableStreamIdCount > Transport.LongRunningConnection.SUGGEST_AVIALABLE_STREAM_COUNT).FirstOrDefault();
                 if (availableConnection != null)
                     return availableConnection;
-                
+
                 // well, we were the first lock section, make a new connection!
-                var newConnections = new IConnection[_connections.Length + 1];
-                if (_connections.Length > 0)
+                var newConnections = new IConnection[appendConnections.Length + 1];
+                if (appendConnections.Length > 0)
                 {
-                    Array.Copy(_connections, 0, newConnections, 0, _connections.Length);
+                    Array.Copy(appendConnections, 0, newConnections, 0, appendConnections.Length);
                     _cluster.GetLogger.Info("prepared query extended to connection count {0}", newConnections.Length);
                 }
 
-                var connection = _cluster.GetConnection();
+                var connection = _cluster.GetConnection(null, true);
                 connection.OnFailure += ConnectionOnOnFailure;
 
                 var cl = _consistencyLevel ?? connection.DefaultConsistencyLevel;
@@ -88,20 +94,59 @@ namespace CassandraSharp.CQLBinaryProtocol
 
                 _id = preparedInfo.Item1;
                 _columnSpecs = preparedInfo.Item2;
-                newConnections[newConnections.Length-1] = connection;
+                newConnections[newConnections.Length - 1] = connection;
 
                 return connection;
             }
         }
 
+        private IConnection prepareConnection()
+        {
+            IConnection connection;
+            if (null == (connection = _connection))
+            {
+                lock (this)
+                {
+                    if (null == (connection = _connection))
+                    {
+                        connection = _cluster.GetConnection();
+                        connection.OnFailure += ConnectionOnOnFailure;
+
+                        var cl = _consistencyLevel ?? connection.DefaultConsistencyLevel;
+                        var executionFlags = _executionFlags ?? connection.DefaultExecutionFlags;
+
+                        var futPrepare = new PrepareQuery(connection, cl, executionFlags, _cql).AsFuture();
+                        futPrepare.Wait();
+                        Tuple<byte[], IColumnSpec[]> preparedInfo = futPrepare.Result.Single();
+
+                        _id = preparedInfo.Item1;
+                        _columnSpecs = preparedInfo.Item2;
+                        _connection = connection;
+                    }
+                }
+            }
+            return _connection;
+        }
+
+        private IConnection getconn()
+        {
+            var conn = prepareConnection();
+            if (conn.GetAvailableStreamIdCount > Transport.LongRunningConnection.SUGGEST_AVIALABLE_STREAM_COUNT)
+            {
+                return conn;
+            }
+            else
+            {
+                return peakConnection();
+            }
+        }
+
         public IQuery<T> Execute(object dataSource)
         {
-            ConsistencyLevel cl;
-            ExecutionFlags executionFlags;
-            IConnection connection = peakConnection();
+            IConnection connection = getconn();
 
-            cl = _consistencyLevel ?? connection.DefaultConsistencyLevel;
-            executionFlags = _executionFlags ?? connection.DefaultExecutionFlags;
+            var cl = _consistencyLevel ?? connection.DefaultConsistencyLevel;
+            var executionFlags = _executionFlags ?? connection.DefaultExecutionFlags;
             IDataMapper mapperIn = _factoryIn.Create(dataSource.GetType());            
             IDataMapper mapperOut = _factoryOut.Create<T>();
             var futQuery = new ExecuteQuery<T>(connection, cl, executionFlags, _cql, _id, _columnSpecs, dataSource, mapperIn, mapperOut);
@@ -110,14 +155,24 @@ namespace CassandraSharp.CQLBinaryProtocol
 
         public void Dispose()
         {
-            lock (this)
+            if (_connection != null)
             {
-                var connections = _connections;
-                foreach (var c in connections.Where(x => x != null))
+                _connection.OnFailure -= ConnectionOnOnFailure;
+                _connection = null;
+            }
+
+            if (appendConnections.Length > 0)
+            {
+                lock (this)
                 {
-                    c.OnFailure -= ConnectionOnOnFailure;
+                    var connections = appendConnections;
+                    foreach (var c in connections.Where(x => x != null))
+                    {
+                        c.OnFailure -= ConnectionOnOnFailure;
+                        _cluster.DisposeConnection(c);
+                    }                    
+                    appendConnections = new IConnection[] { };
                 }
-                _connections = new IConnection[] { };
             }
         }
 
@@ -127,12 +182,21 @@ namespace CassandraSharp.CQLBinaryProtocol
             if (null != connection)
             {
                 connection.OnFailure -= ConnectionOnOnFailure;
-                // find the connection in connections and remove it.
-                lock(this)
+                if (_connection == connection)
                 {
-                    var connections = _connections;
-                    var leftConnections = connections.Where(c => c != connection).ToArray();
-                    _connections = leftConnections;
+                    _connection = null;
+                    return;
+                }
+                else
+                {
+                    // find the connection in connections and remove it.
+                    lock (this)
+                    {
+                        var connections = appendConnections;
+                        var leftConnections = connections.Where(c => c != connection).ToArray();
+                        appendConnections = leftConnections;
+                        _cluster.DisposeConnection(connection);
+                    }
                 }
             }
         }

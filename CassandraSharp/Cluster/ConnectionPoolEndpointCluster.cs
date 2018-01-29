@@ -71,7 +71,30 @@ namespace CassandraSharp.Cluster
             }
         }
 
-        public IConnection GetConnection(BigInteger? token)
+        public void DisposeConnection(IConnection conn)
+        {
+            var allConnections = _ip2Connection.ToArray();
+            foreach (var c in allConnections)
+            {
+                if (c.Value.Contains(conn))
+                {
+                    // found it . delete it.
+                    var newValue = c.Value.Where(x => x != conn).ToArray();
+                    if (newValue.Length == 0)
+                    {
+                        IConnection[] dummy;
+                        _ip2Connection.TryRemove(c.Key, out dummy);
+                    }
+                    else
+                    {
+                        _ip2Connection.TryUpdate(c.Key, newValue, c.Value);
+                    }
+                }
+            }
+            conn.SafeDispose();
+        }
+
+        public IConnection GetConnection(BigInteger? token, bool ForceCreateNew = false)
         {
             IConnection connection = null;
             try
