@@ -69,6 +69,51 @@ namespace CassandraSharpUnitTests.Functional
         }
     }
 
+
+    public class ConsoleNormalLogger : ILogger
+    {
+        public void Debug(string format, params object[] prms)
+        {
+        }
+
+        public void Info(string format, params object[] prms)
+        {
+            Log(format, prms);
+        }
+
+        public void Warn(string format, params object[] prms)
+        {
+            Log(format, prms);
+        }
+
+        public void Error(string format, params object[] prms)
+        {
+            Log(format, prms);
+        }
+
+        public void Fatal(string format, params object[] prms)
+        {
+            Log(format, prms);
+        }
+
+        public void Dispose()
+        {
+        }
+
+        public bool IsDebugEnabled()
+        {
+            return true;
+        }
+
+        private static void Log(string format, object[] prms)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendFormat("LOG   {0} [{1}] - ", DateTime.Now, Thread.CurrentThread.ManagedThreadId);
+            sb.AppendFormat(format, prms);
+            Console.WriteLine(sb);
+        }
+    }
+
     [TestFixture]
     public class StreamStarvationTest
     {

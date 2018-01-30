@@ -22,12 +22,12 @@ namespace CassandraSharp.Enlightenment
     {
         public IDataMapper Create(System.Type type)
         {
-            return new OrdinalDataMapper();
+            return OrdinalDataMapper.DefaultInstance;
         }
 
         public IDataMapper Create<T>()
         {
-            return new OrdinalDataMapper();
+            return OrdinalDataMapper.DefaultInstance;
         }
     }
 }

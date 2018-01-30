@@ -29,7 +29,10 @@ namespace CassandraSharpUnitTests.Endurance
         private void BinaryProtocolRunWritePerformanceParallel(string transportType)
         {
             //run Write Performance Test using cassandra-sharp driver
-            CassandraSharpConfig cassandraSharpConfig = new CassandraSharpConfig();
+            CassandraSharpConfig cassandraSharpConfig = new CassandraSharpConfig
+            {
+                //Logger = new LoggerConfig { Type = typeof(Functional.ConsoleNormalLogger).AssemblyQualifiedName }
+            };
             ClusterManager.Configure(cassandraSharpConfig);
 
             ClusterConfig clusterConfig = new ClusterConfig

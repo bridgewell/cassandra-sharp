@@ -96,6 +96,8 @@ namespace CassandraSharp.CQLBinaryProtocol
                 _columnSpecs = preparedInfo.Item2;
                 newConnections[newConnections.Length - 1] = connection;
 
+                appendConnections = newConnections;
+
                 return connection;
             }
         }
@@ -144,7 +146,6 @@ namespace CassandraSharp.CQLBinaryProtocol
         public IQuery<T> Execute(object dataSource)
         {
             IConnection connection = getconn();
-
             var cl = _consistencyLevel ?? connection.DefaultConsistencyLevel;
             var executionFlags = _executionFlags ?? connection.DefaultExecutionFlags;
             IDataMapper mapperIn = _factoryIn.Create(dataSource.GetType());            

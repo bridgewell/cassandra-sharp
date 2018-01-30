@@ -22,9 +22,14 @@ namespace CassandraSharp.CQLOrdinal
 
     internal sealed class OrdinalDataMapper : IDataMapper
     {
+        /// <summary>
+        /// bcz we do not have properties, we could use a static object to share every threads.
+        /// </summary>
+        public static OrdinalDataMapper DefaultInstance = new OrdinalDataMapper();
+
         public IEnumerable<IColumnData> MapToColumns(object dataSource, IEnumerable<IColumnSpec> columns)
         {
-            object[] data = (object[])dataSource;
+            var data = (object[])dataSource;
 
             foreach (var column in columns)
             {
