@@ -10,3 +10,4 @@ obj/
 Resharper.DotSettings
 _ReSharper.*
 /.vs/*
+*.nupkg

@@ -2,7 +2,7 @@
 <package>
   <metadata>
     <id>bw-cassandra-sharp</id>
-    <version>3.1.3.0</version>
+    <version>3.1.4.0</version>
 	<title>cassandra-sharp - high performance .NET driver for Apache Cassandra</title>
     <authors>Lane</authors>
     <owners>Lane</owners>
