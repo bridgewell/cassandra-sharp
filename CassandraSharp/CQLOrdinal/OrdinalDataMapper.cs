@@ -50,13 +50,9 @@ namespace CassandraSharp.CQLOrdinal
             var rows = rowData.ToList();
 
             var instance = new object[rows.Count];
-            foreach (var column in rows.OrderBy(x => x.ColumnSpec.Index))
+            foreach (var column in rows.Where(r => r.RawData != null))
             {
-                var data = column.RawData != null ?
-                    column.ColumnSpec.Deserialize(column.RawData) :
-                    null;
-
-                instance[column.ColumnSpec.Index] = data;
+                instance[column.ColumnSpec.Index] = column.ColumnSpec.Deserialize(column.RawData);
             }
 
             return instance;
