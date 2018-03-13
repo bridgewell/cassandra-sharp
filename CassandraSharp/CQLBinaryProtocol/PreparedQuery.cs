@@ -195,7 +195,7 @@ namespace CassandraSharp.CQLBinaryProtocol
             if (null != connection)
             {
                 connection.OnFailure -= ConnectionOnOnFailure;
-                if (_connection.connection == connection)
+                if (_connection?.connection == connection)
                 {
                     _connection = null;
                     return;
@@ -203,12 +203,19 @@ namespace CassandraSharp.CQLBinaryProtocol
                 else
                 {
                     // find the connection in connections and remove it.
+                    if (appendConnections.Length == 0)
+                        return;
+
                     lock (this)
                     {
                         var connections = appendConnections;
                         var leftConnections = connections.Where(c => c.connection != connection).ToArray();
-                        appendConnections = leftConnections;
-                        _cluster.DisposeConnection(connection);
+                        if (leftConnections.Length != connections.Length)
+                        {
+                            // means we found it in connections.
+                            _cluster.DisposeConnection(connection);
+                            appendConnections = leftConnections;
+                        }
                     }
                 }
             }
